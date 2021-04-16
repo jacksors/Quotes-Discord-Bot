@@ -1,3 +1,12 @@
+# AP CSP Create Performace Task
+# This program allows a discord user to add quotes to a database that is specific to their server and then recall the quotes with various commands
+
+# In order to use this program:
+# 1. A bot running this code is added to a discord server
+# 2. A user with the role "QuotesBot Admin" runs the command +setquoteschannel in a text channel in which they would like users to submit their quotes
+# 3. Users type quotes formatted as "Quote" @Author in the channel set in step 2
+# 4. Users can recall their quotes from the database using +randomquote or see how many quotes there are with +numquotes
+
 # Import libraries
 import discord
 import csv
@@ -27,6 +36,9 @@ client = commands.Bot(command_prefix = '+', intents=intents)
 client.remove_command('help')
 
 # Set up connection to the database
+# This database is run on a raspberry pi along with the bot to allow it to be running 24/7. 
+# The database is using MongoDB, a non-SQL database which stores information in JSON-like files
+# The mongoURL variable is generally imported from another file along with the API key, but can be placed in this file instead
 cluster = MongoClient(mongoURL)
 db = cluster['discordbot']
 
@@ -163,6 +175,7 @@ async def mostquoted(ctx):
         author = maxauthor['_id']
         await ctx.send('%s with %s quotes to their name.' % (mention(ctx, author),max_item_count))
     else:
+        # Print warning that server has no quotes
         print('Usr attempted +mostquoted in srvr with no quotes')
         await(await ctx.send('This server does not have any quotes.')).delete(delay=10)
 
@@ -226,18 +239,22 @@ async def delquote(ctx,*,message):
     collection.delete_many({'quote':quote, 'author':int(author), 'server_id':int(ctx.message.guild.id)})
     await ctx.send('Deleted %s quotes matching %s' % (count, message))
 
+# Turn on and off user mentions to manage spam notifications
 @client.command()
 @commands.has_role('QuotesBot Admin')
 async def togglementions(ctx):
     collection = db['servers']
     mentions = collection.find_one({'server_id':ctx.message.guild.id})
     if mentions['mentions'] == True:
+        # Set user mentions to false if they are true
         collection.update_one({'server_id':ctx.message.guild.id},{'$set' : {'mentions':False}})
         await ctx.send('User mentions turned off.')
     else:
+        # Set user mentions to true if they are false
         collection.update_one({'server_id':ctx.message.guild.id},{'$set' : {'mentions':True}})
         await ctx.send('User mentions turned on.')
 
+# Instructions for input and output
 # Create the +help message to show the user a list of commands and how to use them
 # Create the embed
 @client.command()
@@ -257,7 +274,7 @@ async def help(ctx):
     embed.add_field(name='+delquoteschannel', value='Type this in the channel your quotes channel if you wish for it to no longer be a quotes channel. In order to run this command, you must have the role \"QuotesBot Admin\"', inline=False)
     embed.add_field(name='+togglementions', value='Toggles whether a the author of the quote is mentioned or not when randomquote and numquotes are run. On by default, but turn off to avoid excessive mentions in large servers. In order to run this command, you must have the role \"QuotesBot Admin\"', inline=False)
     embed.add_field(name='Links', value='[Github](https://github.com/jacksors/Quotes-Discord-Bot) | [Support Server](https://discord.gg/DmYw7CbXfT) | [Top.gg](https://top.gg/bot/799028695368073255)', inline=False)
-    embed.set_footer(text="QuotesBot by @jackson#1001")
     await ctx.send(embed=embed)
-    
+     
+# Run the bot using BOT_TOKEN, the discord API key imported form bot_token.py     
 client.run(BOT_TOKEN)
