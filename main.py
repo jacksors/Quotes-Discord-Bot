@@ -1,3 +1,4 @@
+# Import libraries
 import discord
 import csv
 import operator
@@ -16,16 +17,21 @@ from discord.ext import commands
 from discord.ext.commands import MissingPermissions
 from bot_token import *
 
+# Set intents for discord API
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 client = commands.Bot(command_prefix = '+', intents=intents)
 
+# Remove default help command, I am using my own
 client.remove_command('help')
 
+# Set up connection to the database
 cluster = MongoClient(mongoURL)
 db = cluster['discordbot']
 
+# Set mention function, allows users to choose whether people get a notification when their name is mentioned to the bot
+# If mentions are set to true, notify them. Else (mentions are set to false), do not notify them and only print their name
 def mention(ctx, usrid):
     collection = db['servers']
     results = collection.find_one({"server_id":ctx.message.guild.id})
@@ -37,12 +43,14 @@ def mention(ctx, usrid):
         msg = '@' + str(ctx.guild.get_member(usrid))
         return msg
 
+#Print to the console when the bot is ready after startup
 @client.event
 async def on_ready():
     await client.change_presence(activity=discord.Game('+help'))
     setup(client)
     print('Bot is ready.')
 
+# Log when the bot joins a server
 @client.event
 async def on_guild_join(guild):
     f = open('serverlist.txt', 'a')
@@ -50,6 +58,7 @@ async def on_guild_join(guild):
     f.close
     print('Joined %s' % guild.name)
 
+# Error handling. Print a message to the user when a command lacks arguments or permissions
 @client.event
 async def on_command_error(ctx, error):
    if isinstance(error, commands.MissingRequiredArgument):
@@ -61,11 +70,13 @@ async def on_command_error(ctx, error):
    else:
        print(error)
 
+# Record a quote when someone puts one in the quotes channel
 @client.event
 async def on_message(message):
+    # Set the database
     collection = db['servers']
+    # Check if the message is in the quotes channel for the server and make sure the author is not the bot.
     if (collection.count_documents({ 'channel_id':message.channel.id }, limit = 1) != 0 and message.author != client.user):
-        #copied from copy() below
         #sanitize message input
         history = re.sub(r'[\u201C\u201D\u201E\u201F\u2033\u2036]', '"', message.content)
         history = re.sub(r'[^A-Za-z0-9\s,.?!:;()@#$%^&*_+-=<>"-]+', '', history) + "\n"
@@ -78,27 +89,28 @@ async def on_message(message):
         split_history = history.split(" ")
         #Substitute any non numberic characters for blank and grab the last word in the message (this assumes the author is the last word which it must be for this to work)
         author = re.sub(r'[^0-9]', '', split_history[-1])
-        #Onto the database interaction using Pandas (pd)
+        #Onto the database interaction using MongoDB
         #Make sure the message included a quote and author
-        if ((author != '' and quote != '' and int(author) != 799028695368073255)):
+        if ((author != '' and quote != '')):
+            # If the message included an author and quote, add it to the database
             collection = db['quotes']
             collection.insert_one({'quote':quote, 'author':int(author), 'channel_id':message.channel.id, 'server_id':message.guild.id, 'message_id':message.id})
             await(await message.channel.send("Quote by <@" + author + "> added!")).delete(delay=10)
             return
         elif (message.content == "+setquoteschannel"):
+            # If the message is a command to set the channel as a quotes channel, let the user know it already is one
             await message.delete()
             await(await message.channel.send("Channel is already set as the quotes channel!")).delete(delay=10)
             return
         elif (message.content == "+delquoteschannel"):
+            # Process the delete quotes channel command
             await client.process_commands(message)
             return
         elif (message.content.startswith("+")):
+            # Let the user know not to send commands in the quotes channel
             await message.delete()
             await(await message.channel.send("<@%s> please do not send commands in the quotes channel!" % message.author.id)).delete(delay=10)
             return
-        elif (int(author) == 799028695368073255):
-            await message.delete()
-            await(await message.channel.send("<@%s>, I cannot speak!" % message.author.id)).delete(delay=10)
         else:
             #If the user sends a message that isnt a quote delete the message, display the warning, and delete the warning after 10 seconds
             await message.delete()
@@ -107,53 +119,44 @@ async def on_message(message):
     #Pass on any messages that are irrelevant (arent in the quotes channel or are by this robot)
     await client.process_commands(message)
 
-@client.command()
-async def exec(ctx,*,message):
-    if ctx.message.author.id == 220713750028615680:
-        import subprocess
-        from subprocess import Popen, PIPE
-        stdout = Popen(message,shell=True,stdout=PIPE).stdout
-        output = stdout.read()
-        await ctx.send('```' + output.decode() + '```')
-    else:
-        ctx.send('You must be @jackson#1001 to run this command!')
-
-@client.command()
-async def send(ctx,*,message):
-    if ctx.message.author.id == 220713750028615680:
-        await message.delete()
-        await ctx.send(message)
-    else:
-        ctx.send('You must be @jackson#1001 to run this command!')
-
+# Set quotes channel command
 @client.command()
 @commands.has_role('QuotesBot Admin')
 async def setquoteschannel(ctx):
+    # Set up database
     collection = db['servers']
+    # If the server already has a quotes channel:
     if collection.count_documents({ 'server_id':ctx.message.guild.id }, limit = 1) != 0:
         await(await ctx.send('Your server already has a quotes channel!')).delete(delay=10)
         print(True)
+    # If it doesn't, make a new one
     else:
         collection.insert_one({'server_id': int(ctx.message.guild.id), 'channel_id': int(ctx.message.channel.id), 'mentions': True})
         await(await ctx.send('Channel %s set as quotes channel!' % client.get_channel(ctx.message.channel.id).mention)).delete(delay=10)
         print(False)
 
+# Delete a quotes channel command
 @client.command()
 @commands.has_role('QuotesBot Admin')
 async def delquoteschannel(ctx,*, message=None):
+    # If user understands acknowledgement, delete everything
     if message == 'understood':
         collection = db['servers']
         collection.delete_many({ 'server_id':ctx.message.guild.id })
         collection = db['quotes']
         collection.delete_many({ 'server_id':ctx.message.guild.id })
         await ctx.send('Your server no longer has a designated quotes channel and all previous quotes have been erased from the database.')
+    # Send the user a warning that everything will be deleted
     else:
         await ctx.send('WARNING! This command will delete all of your quotes from the database. The quotes will remain in your quotes channel, but they will not be recallable through any of the commands this bot provides. In order to run this command, you must type `+delquoteschannel understood`')
 
+# See who has the most quotes
 @client.command()
 async def mostquoted(ctx):
     collection = db['quotes']
+    # Make sure the server has any quotes
     if collection.count_documents({ 'server_id':ctx.message.guild.id }, limit = 1) != 0:
+        # Run database query to list the authors by number of quotes
         maxauthor = collection.aggregate( [{ '$match': {'server_id':int(ctx.message.guild.id)}}, { "$unwind": "$author" }, { "$sortByCount": "$author" }] )
         maxauthor = list(maxauthor)[0]
         max_item_count = maxauthor['count']
@@ -163,20 +166,23 @@ async def mostquoted(ctx):
         print('Usr attempted +mostquoted in srvr with no quotes')
         await(await ctx.send('This server does not have any quotes.')).delete(delay=10)
 
+# Output a random quoute, with or without a set author
 @client.command()
 async def randomquote(ctx,*,message=None):
     collection = db['quotes']
     try:
         if (message == None):
+            #User does not care who the author of the quote is, get a random one:
             document = collection.aggregate([{ '$match': {'server_id':int(ctx.message.guild.id)}},{ '$sample': { 'size': 1 } }])
             document = list(document)[0]
         else:
+            # User does care about the author of the quote, get a random one from that author
             #get the userid that the message sender is querying about (using the same code that the message grabber for the quotes channel uses)
             history = re.sub(r'[^A-Za-z0-9\s,."-]+', '', message) + "\n"
             #Now for finding the author:
             #split the message into a list of individual "words"
             split_history = history.split(" ")
-            #Substitute any non numberic characters for blank and grab the last word in the message (this assumes the author is the last word which it must be for this to work)
+            #Substitute any non numeric characters for blank and grab the last word in the message (this assumes the author is the last word which it must be for this to work)
             author = re.sub(r'[^0-9]', '', split_history[-1])
             if author == '':
                 await(await ctx.send('<@%s> not a valid author!' % ctx.author.id)).delete(delay=10)
@@ -197,7 +203,7 @@ async def numquotes(ctx,*,message):
         #Now for finding the author:
         #split the message into a list of individual "words"
         split_history = history.split(" ")
-        #Substitute any non numberic characters for blank and grab the last word in the message (this assumes the author is the last word which it must be for this to work)
+        #Substitute any non numeric characters for blank and grab the last word in the message (this assumes the author is the last word which it must be for this to work)
         author = re.sub(r'[^0-9]', '', split_history[-1])
         count = collection.count_documents( {'author':int(author),'server_id':ctx.message.guild.id} )
         await ctx.send("%s has %s quote(s) attributed to them." % (mention(ctx, author),str(count)))
@@ -205,6 +211,7 @@ async def numquotes(ctx,*,message):
         print('User attempted +numquotes in server with no quotes')
         await ctx.send('This server does not have any quotes.')
 
+# Delete a quote from the database
 @client.command()
 @commands.has_role('QuotesBot Admin')
 async def delquote(ctx,*,message):
@@ -231,6 +238,8 @@ async def togglementions(ctx):
         collection.update_one({'server_id':ctx.message.guild.id},{'$set' : {'mentions':True}})
         await ctx.send('User mentions turned on.')
 
+# Create the +help message to show the user a list of commands and how to use them
+# Create the embed
 @client.command()
 async def help(ctx):
     embed = discord.Embed(
@@ -238,6 +247,7 @@ async def help(ctx):
         colour = discord.Colour.blue()
         
     )
+    # Create all the listings in the embed
     embed.add_field(name='Quote Formatting', value='All quotes must be formatted as \"quote\" @author, or else they will be rejected by the bot.', inline=False)
     embed.add_field(name='+mostquoted', value='Outputs the person with the most quotes attributed to them.', inline=False)
     embed.add_field(name='+randomquote (optional: @user)', value='Outputs a random quote from the user-specified quotes channel. Optionally, mention a user to get a random quote attributed to them.   ', inline=False)
